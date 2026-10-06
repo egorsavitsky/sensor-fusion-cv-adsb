@@ -14,7 +14,7 @@ struct Track3D {
 struct FusionResult {
     int cv_id;
     int adsb_id;
-    double probability; // От 0.0 до 1.0
+    double probability;
 };
 
 class SensorFusion {
