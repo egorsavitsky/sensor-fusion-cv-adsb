@@ -1,0 +1,8 @@
+ID	Class	ClassProbability	Size.X	Size.Y	Size.Z	Position.X	Position.Y	Position.Z	Direction.X	Direction.Y	Direction.Z	SpatialProbability	Timestamp(Ms)	Obs.Lat(rad)	Obs.Lon(rad)	Obs.Alt(M)	Obs.Pitch(Deg)	Obs.Roll(Deg)	Obs.Yaw(Deg)	Own.Lat(rad)	Own.Lon(rad)	Own.Alt(M)	Own.Pitch(Deg)	Own.Roll(Deg)	Own.Yaw(Deg)	Own.GroundSpeed(km/h)	Own.RoC(m/s)
+41	0	0.8	2	2	2	0	1	0	0	0	1	0.8	0	0	0	10	0	0	0	0	0	10	0	0	0	0	0
+-8	0	0.8	2	2	2	0	21	0	0	0	1	0.8	0	0	0	30	0	0	0	0	0	10	0	0	0	0	0
+41	0	0.8	2	2	2	0	1	0	0	0	1	0.8	1000	0	0	10	0	0	0	0	0	10	0	0	0	0	0
+-8	0	0.8	2	2	2	0	21	0	0	0	1	0.8	1000	0	0	30	0	0	0	0	0	10	0	0	0	0	0
+41	0	0.8	2	2	2	0	1	0	0	0	1	0.8	2000	0	0	10	0	0	0	0	0	10	0	0	0	0	0
+-8	0	0.8	2	2	2	0	21	0	0	0	1	0.8	2000	0	0	30	0	0	0	0	0	10	0	0	0	0	0
+													3000							0	0	10	0	0	0
