@@ -13,6 +13,7 @@ struct SimulationConfig {
     double delay = 0.2;
     double dropout = 0.1;
     double coverage = 0.8;
+    double heading_sigma = 0.0; // СКО ошибки курса в радианах
     std::uint32_t seed = 42;
 };
 
@@ -29,6 +30,9 @@ struct ModelData {
 
 ModelData simulateAdsb(const std::vector<Frame>& frames, const LocalFrame& frame,
                        const SimulationConfig& config);
+Track3D referenceTrack(const Obstacle& obstacle, double time, const LocalFrame& frame);
+Track3D cameraTrack(const Obstacle& obstacle, double time, const CameraTransform& transform);
+LogData twoObjectScenario(const Camera& camera);
 
 class AdsbSynchronizer {
 public:

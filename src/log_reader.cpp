@@ -9,6 +9,10 @@
 #include <stdexcept>
 
 namespace {
+/** Разделяет TSV-строку, сохраняя пустые поля.
+ * @param line Одна строка лога без символа перевода строки.
+ * @return Поля в исходном порядке.
+ */
 std::vector<std::string> split(const std::string& line) {
     std::vector<std::string> fields;
     std::size_t start = 0;
@@ -21,6 +25,10 @@ std::vector<std::string> split(const std::string& line) {
     return fields;
 }
 
+/** Читает конечное вещественное число из поля.
+ * @param field Непустое числовое поле из текстовой записи.
+ * @return Число; при ошибке формата выбрасывается исключение.
+ */
 double number(const std::string& field) {
     std::size_t consumed = 0;
     const double value = std::stod(field, &consumed);
@@ -30,6 +38,10 @@ double number(const std::string& field) {
     return value;
 }
 
+/** Читает целое число с проверкой диапазона int.
+ * @param field Непустое числовое поле из текстовой записи.
+ * @return Целое значение поля.
+ */
 int integer(const std::string& field) {
     std::size_t consumed = 0;
     const long long value = std::stoll(field, &consumed);
@@ -40,6 +52,10 @@ int integer(const std::string& field) {
     return static_cast<int>(value);
 }
 
+/** Находит медиану без полной сортировки.
+ * @param values Числовой набор; порядок элементов может измениться.
+ * @return Медианное значение непустого набора.
+ */
 double median(std::vector<double>& values) {
     if (values.empty()) throw std::runtime_error("No obstacles in calibration frames");
     const std::size_t middle = values.size() / 2;
@@ -50,25 +66,31 @@ double median(std::vector<double>& values) {
 }
 } // namespace
 
+/** Читает и проверяет лог СТЗ, собирая записи в кадры.
+ * @param input Поток TSV с заголовками и записями СТЗ.
+ * @return Кадры, число записей и счётчики пустых строк.
+ */
 LogData readLog(std::istream& input) {
     std::string line;
     if (!std::getline(input, line)) throw std::runtime_error("Empty log file");
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.compare(0, 3, "\xef\xbb\xbf") == 0) line.erase(0, 3);
     const auto header = split(line);
+    // Привязка по названиям сохраняет работу при перестановке столбцов.
     std::map<std::string, std::size_t> columns;
     for (std::size_t i = 0; i < header.size(); ++i) {
         if (header[i].empty() || !columns.emplace(header[i], i).second) {
-            throw std::runtime_error("Empty or duplicate column name");
+            throw std::runtime_error("Log line 1: empty or duplicate column name");
         }
     }
     const std::vector<std::string> required = {
-        "ID", "Class", "Size.Y", "Position.X", "Position.Y", "Position.Z", "Timestamp(Ms)",
+        "ID", "Class", "Size.X", "Size.Y", "Size.Z", "Position.X", "Position.Y", "Position.Z", "Timestamp(Ms)",
+        "Direction.X", "Direction.Y", "Direction.Z", "Obs.Yaw(Deg)",
         "Obs.Lat(rad)", "Obs.Lon(rad)", "Obs.Alt(M)",
         "Own.Lat(rad)", "Own.Lon(rad)", "Own.Alt(M)",
         "Own.Pitch(Deg)", "Own.Roll(Deg)", "Own.Yaw(Deg)"};
     for (const auto& name : required) {
-        if (columns.count(name) == 0) throw std::runtime_error("Missing column: " + name);
+        if (columns.count(name) == 0) throw std::runtime_error("Log line 1: missing column " + name);
     }
     LogData result;
     double origin_ms = 0.0, last_ms = -1.0;
@@ -108,6 +130,7 @@ LogData readLog(std::istream& input) {
                                        radians(number(field("Own.Pitch(Deg)"))),
                                        radians(number(field("Own.Roll(Deg)")))};
             if (result.frames.empty() || time_ms != last_ms) {
+                // Одинаковая метка времени объединяет препятствия в один кадр.
                 if (result.frames.empty()) origin_ms = time_ms;
                 Frame frame;
                 frame.timestamp = (time_ms - origin_ms) / 1000.0;
@@ -128,6 +151,16 @@ LogData readLog(std::istream& input) {
             last_ms = time_ms;
             ++result.records;
             if (empty) {
+                // Отсутствующий ID при заполненных полях препятствия означает повреждённую запись.
+                for (std::size_t i = 0; i < fields.size(); ++i) {
+                    if (fields[i].empty()) continue;
+                    const auto& name = header[i];
+                    if (name == "Class" || name == "ClassProbability" || name == "SpatialProbability" ||
+                        name.compare(0, 5, "Size.") == 0 || name.compare(0, 9, "Position.") == 0 ||
+                        name.compare(0, 10, "Direction.") == 0 || name.compare(0, 4, "Obs.") == 0) {
+                        throw std::runtime_error("Obstacle data without ID: " + name);
+                    }
+                }
                 if (!result.frames.back().obstacles.empty() || frame_empty) {
                     throw std::runtime_error("Empty record mixed with obstacles");
                 }
@@ -141,8 +174,13 @@ LogData readLog(std::istream& input) {
             obstacle.object_class = integer(field("Class"));
             obstacle.position = {number(field("Position.X")), number(field("Position.Y")),
                                  number(field("Position.Z"))};
-            obstacle.height = number(field("Size.Y"));
-            if (obstacle.height < 0.0) throw std::runtime_error("Negative object height");
+            obstacle.size = {number(field("Size.X")),number(field("Size.Y")),number(field("Size.Z"))};
+            if (obstacle.size.x <= 0 || obstacle.size.y <= 0 || obstacle.size.z <= 0) {
+                throw std::runtime_error("Object dimensions must be positive");
+            }
+            obstacle.direction = {number(field("Direction.X")),number(field("Direction.Y")),number(field("Direction.Z"))};
+            if (squaredDistance(obstacle.direction,{0,0,0}) == 0) throw std::runtime_error("Zero object direction");
+            obstacle.reference_heading = radians(number(field("Obs.Yaw(Deg)")));
             obstacle.reference = {number(field("Obs.Lat(rad)")), number(field("Obs.Lon(rad)")),
                                   number(field("Obs.Alt(M)"))};
             toEcef(obstacle.reference);
@@ -157,12 +195,22 @@ LogData readLog(std::istream& input) {
     return result;
 }
 
+/** Читает и проверяет лог СТЗ, собирая записи в кадры.
+ * @param path Путь к текстовому файлу лога.
+ * @return Кадры, число записей и счётчики пустых строк.
+ */
 LogData readLog(const std::string& path) {
     std::ifstream input(path);
     if (!input) throw std::runtime_error("Cannot open log: " + path);
     return readLog(input);
 }
 
+/** Оценивает постоянное смещение камеры по начальной части записи.
+ * @param frames Кадры в порядке возрастания времени.
+ * @param count Число первых кадров для оценки смещения.
+ * @param camera Параметры установки камеры и привязки координат объекта.
+ * @return Камера с медианным смещением; при count=0 возвращается исходная установка.
+ */
 Camera calibrateCamera(const std::vector<Frame>& frames, std::size_t count, Camera camera) {
     if (count == 0) return camera;
     if (count >= frames.size()) {
@@ -171,7 +219,7 @@ Camera calibrateCamera(const std::vector<Frame>& frames, std::size_t count, Came
     std::vector<double> x, y, z;
     for (std::size_t i = 0; i < count; ++i) {
         for (const auto& obstacle : frames[i].obstacles) {
-            const Vec3 offset = cameraOffset(obstacle.position, obstacle.height, obstacle.reference,
+            const Vec3 offset = cameraOffset(obstacle.position, obstacle.size.y, obstacle.reference,
                                               frames[i].own, frames[i].attitude, camera);
             x.push_back(offset.x);
             y.push_back(offset.y);

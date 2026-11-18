@@ -22,11 +22,13 @@ struct Camera {
 
 double radians(double degrees);
 Vec3 toEcef(const Geodetic& point);
+Geodetic fromEcef(const Vec3& point);
 Vec3 enuToEcef(const Vec3& vector, const Geodetic& origin);
 Vec3 ecefToEnu(const Vec3& vector, const Geodetic& origin);
 Vec3 bodyToEnu(const Vec3& vector, const Attitude& attitude);
 Vec3 enuToBody(const Vec3& vector, const Attitude& attitude);
 Vec3 cameraToBody(const Vec3& vector, const Attitude& mounting);
+Vec3 bodyToCamera(const Vec3& vector, const Attitude& mounting);
 
 class LocalFrame {
 public:
@@ -34,6 +36,7 @@ public:
     Vec3 fromGeodetic(const Geodetic& point) const;
     Vec3 fromEcef(const Vec3& point) const;
     Vec3 vectorFromEcef(const Vec3& vector) const;
+    Geodetic toGeodetic(const Vec3& point) const;
 
 private:
     Vec3 ecef_origin_;
@@ -45,6 +48,7 @@ public:
     CameraTransform(const Geodetic& own, const Attitude& attitude,
                     const Camera& camera, const LocalFrame& frame);
     Vec3 apply(const Vec3& position, double object_height) const;
+    Vec3 direction(const Vec3& vector) const;
 
 private:
     Vec3 origin_, x_, y_, z_, height_correction_;

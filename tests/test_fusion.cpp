@@ -14,29 +14,53 @@
 #include <string>
 #include <vector>
 
+/** Запускает отдельную группу проверок площади пересечения. */
+void testOverlap();
+
 namespace {
 int checks = 0;
 
+/** Проверяет условие теста и увеличивает счётчик проверок.
+ * @param condition Проверяемое условие.
+ * @param message Сообщение при невыполнении проверки.
+ */
 void require(bool condition, const std::string& message) {
     ++checks;
     if (!condition) throw std::runtime_error(message);
 }
 
+/** Сравнивает два числа по абсолютной погрешности.
+ * @param actual Полученное значение.
+ * @param expected Ожидаемое значение.
+ * @param tolerance Допустимая абсолютная погрешность.
+ * @param message Сообщение при невыполнении проверки.
+ */
 void near(double actual, double expected, double tolerance, const std::string& message) {
     require(std::abs(actual-expected) <= tolerance, message);
 }
 
+/** Проверяет евклидово расстояние между векторами.
+ * @param actual Полученный вектор.
+ * @param expected Ожидаемый вектор.
+ * @param tolerance Допустимая абсолютная погрешность.
+ * @param message Сообщение при невыполнении проверки.
+ */
 void near(const Vec3& actual, const Vec3& expected, double tolerance, const std::string& message) {
     require(squaredDistance(actual, expected) <= tolerance*tolerance, message);
 }
 
 template<class Function>
+/** Проверяет, что ошибочные данные вызывают исключение.
+ * @param function Проверяемое действие, которое должно вызвать исключение.
+ * @param message Сообщение при невыполнении проверки.
+ */
 void rejects(Function function, const std::string& message) {
     bool thrown = false;
     try { function(); } catch (const std::exception&) { thrown = true; }
     require(thrown, message);
 }
 
+/** Проверяет трёхмерную интерполяцию и её граничные условия. */
 void interpolation() {
     const Track3D a = {1.0, 7, {0, 10, 20}}, b = {3.0, 7, {10, 20, 60}};
     Track3D result;
@@ -57,6 +81,7 @@ void interpolation() {
     require(!interpolateAdsb(std::numeric_limits<double>::quiet_NaN(), a, b, 3, result), "NaN time rejected");
 }
 
+/** Проверяет расстояния, уникальность ID и неоднозначные пары. */
 void association() {
     SensorFusion fusion;
     const std::vector<Track3D> cv = {{0, 10, {0,0,0}}, {0, 20, {100,100,0}}};
@@ -81,6 +106,7 @@ void association() {
     require(fusion.associateTracks(close_cv, close_adsb, Assignment::Optimal).matches.size() == 2, "Global assignment recovers two pairs");
 }
 
+/** Сравнивает назначение по расстоянию с полным перебором. */
 void optimalAgainstEnumeration() {
     std::mt19937 random(5);
     std::uniform_real_distribution<double> coordinate(-20,20);
@@ -122,6 +148,7 @@ void optimalAgainstEnumeration() {
     }
 }
 
+/** Проверяет геодезию, повороты, смещение камеры и отделение калибровки. */
 void geometry() {
     const Geodetic origin = {0,0,10};
     near(toEcef(origin), {6378147,0,0}, 1e-7, "WGS84 equator");
@@ -145,7 +172,7 @@ void geometry() {
 
     Frame first;
     first.own = origin;
-    first.obstacles.push_back({7,0,{0,5,0},2,{0,0,17}});
+    first.obstacles.push_back({7,0,{0,5,0},{2,2,2},{0,0,17}});
     Frame outlier = first;
     outlier.obstacles[0].position.y = 1000;
     const Camera calibrated = calibrateCamera({first,first,outlier},2,Camera{});
@@ -155,16 +182,26 @@ void geometry() {
 
 const std::string header = "ID\tClass\tClassProbability\tSize.X\tSize.Y\tSize.Z\tPosition.X\tPosition.Y\tPosition.Z\tDirection.X\tDirection.Y\tDirection.Z\tSpatialProbability\tTimestamp(Ms)\tObs.Lat(rad)\tObs.Lon(rad)\tObs.Alt(M)\tObs.Pitch(Deg)\tObs.Roll(Deg)\tObs.Yaw(Deg)\tOwn.Lat(rad)\tOwn.Lon(rad)\tOwn.Alt(M)\tOwn.Pitch(Deg)\tOwn.Roll(Deg)\tOwn.Yaw(Deg)\tOwn.GroundSpeed(km/h)\tOwn.RoC(m/s)";
 
+/** Формирует тестовую TSV-запись с заданными ID и временем.
+ * @param id Идентификатор объекта тестового лога.
+ * @param timestamp Метка времени тестовой записи в миллисекундах.
+ * @return Строка данных с габаритами и направлением объекта.
+ */
 std::string record(int id, int timestamp) {
     return std::to_string(id)+"\t0\t0.8\t2\t2\t2\t10\t5\t100\t0\t0\t1\t0.8\t"+
            std::to_string(timestamp)+"\t0\t0\t17\t0\t0\t0\t0\t0\t10\t0\t0\t0\t10\t0";
 }
 
+/** Читает тестовый TSV из строки.
+ * @param text Заголовок и записи тестового лога с разделителями-табуляциями.
+ * @return Разобранные кадры и счётчики записей.
+ */
 LogData parse(const std::string& text) {
     std::istringstream input(text);
     return readLog(input);
 }
 
+/** Проверяет чтение нормальных, пустых и повреждённых строк. */
 void reader() {
     const std::string empty = std::string(13,'\t')+"2000"+std::string(7,'\t')+"0\t0\t10\t0\t0\t0";
     const auto log = parse("\xef\xbb\xbf"+header+"\r\n"+record(-7,1000)+"\r\n"+empty+"\r\n");
@@ -183,6 +220,7 @@ void reader() {
     rejects([&] { parse(header+"\n"+empty+"\n"+record(1,2000)); }, "Empty frame cannot contain obstacle record");
 }
 
+/** Проверяет доступность сообщений, задержки и офлайн-интерполяцию. */
 void synchronization() {
     ModelData model;
     model.streams[987] = {{{0,987,{0,0,0}},1}, {{2,987,{2,4,6}},3}};
@@ -204,10 +242,11 @@ void synchronization() {
     require(gap.at(1).empty(), "Long gap cannot be bridged");
 }
 
+/** Проверяет воспроизводимость модели и независимость потерь. */
 void simulation() {
     Frame first, last;
     first.own = {0,0,10};
-    first.obstacles.push_back({17,0,{0,0,0},2,{0,0,17}});
+    first.obstacles.push_back({17,0,{0,0,0},{2,2,2},{0,0,17}});
     last = first;
     last.timestamp = 2;
     const std::vector<Frame> frames = {first,last};
@@ -237,7 +276,7 @@ void simulation() {
     rejects([&] { simulateAdsb(frames,local,config); }, "Unbounded message generation rejected");
 
     first.obstacles.clear();
-    for (int i=0; i<10; ++i) first.obstacles.push_back({i,0,{},2,{0,0,17.0+i*20}});
+    for (int i=0; i<10; ++i) first.obstacles.push_back({i,0,{},{2,2,2},{0,0,17.0+i*20}});
     last = first;
     last.timestamp = 20;
     config.period = 1;
@@ -260,6 +299,9 @@ void simulation() {
 }
 } // namespace
 
+/** Запускает проверки чтения лога, геометрии, модели и назначения пар.
+ * @return 0 при успешном завершении, 1 при ошибке.
+ */
 int main() {
     try {
         interpolation();
@@ -269,6 +311,7 @@ int main() {
         reader();
         synchronization();
         simulation();
+        testOverlap();
         std::cout << "Passed " << checks << " checks\n";
         return 0;
     } catch (const std::exception& error) {

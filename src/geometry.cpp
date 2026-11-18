@@ -4,12 +4,21 @@
 #include <stdexcept>
 
 namespace {
+/** Вычисляет скалярное произведение трёхмерных векторов.
+ * @param a Первый вектор.
+ * @param b Второй вектор в тех же осях.
+ * @return Сумма произведений соответствующих координат.
+ */
 double dot(const Vec3& a, const Vec3& b) {
     return a.x*b.x + a.y*b.y + a.z*b.z;
 }
 
 struct Axes { Vec3 right, up, forward; };
 
+/** Строит оси ВС в ENU по курсу, тангажу и крену.
+ * @param attitude Курс, тангаж и крен собственного ВС в радианах.
+ * @return Единичные направления вправо, вверх и вперёд.
+ */
 Axes bodyAxes(const Attitude& attitude) {
     const double sy = std::sin(attitude.yaw), cy = std::cos(attitude.yaw);
     const double sp = std::sin(attitude.pitch), cp = std::cos(attitude.pitch);
@@ -20,8 +29,16 @@ Axes bodyAxes(const Attitude& attitude) {
 }
 } // namespace
 
+/** Переводит угол из градусов в радианы.
+ * @param degrees Угол в градусах.
+ * @return Угол в радианах.
+ */
 double radians(double degrees) { return degrees * 3.14159265358979323846 / 180.0; }
 
+/** Переводит WGS84 в декартовы координаты от центра Земли.
+ * @param point Широта и долгота WGS84 в радианах, высота в метрах.
+ * @return Координаты ECEF в метрах.
+ */
 Vec3 toEcef(const Geodetic& point) {
     if (!std::isfinite(point.latitude) || !std::isfinite(point.longitude) ||
         !std::isfinite(point.altitude) || std::abs(point.latitude) > radians(90) ||
@@ -36,6 +53,11 @@ Vec3 toEcef(const Geodetic& point) {
             (n*(1.0-e2) + point.altitude)*s};
 }
 
+/** Поворачивает вектор из локальных осей ENU в ECEF.
+ * @param vector Компоненты на восток, север и вверх.
+ * @param origin Геодезическое начало локальной системы WGS84.
+ * @return Вектор в ECEF без смещения начала координат.
+ */
 Vec3 enuToEcef(const Vec3& vector, const Geodetic& origin) {
     const double sl = std::sin(origin.longitude), cl = std::cos(origin.longitude);
     const double sp = std::sin(origin.latitude), cp = std::cos(origin.latitude);
@@ -44,6 +66,37 @@ Vec3 enuToEcef(const Vec3& vector, const Geodetic& origin) {
              cp*vector.y+sp*vector.z};
 }
 
+/** Переводит ECEF в геодезические координаты WGS84.
+ * @param point Декартовы координаты от центра Земли, метры.
+ * @return Широта и долгота в радианах, эллипсоидальная высота в метрах.
+ */
+Geodetic fromEcef(const Vec3& point) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+        throw std::invalid_argument("Non-finite ECEF coordinates");
+    }
+    const double a = 6378137.0, e2 = 6.6943799901413165e-3;
+    const double p = std::hypot(point.x,point.y);
+    if (p < 1e-9) {
+        if (std::abs(point.z) < 1e-9) throw std::invalid_argument("Earth centre has no geodetic position");
+        return {std::copysign(radians(90),point.z),0,std::abs(point.z)-a*std::sqrt(1-e2)};
+    }
+    double latitude = std::atan2(point.z,p*(1-e2));
+    for (int i=0; i<15; ++i) {
+        const double s = std::sin(latitude), n = a/std::sqrt(1-e2*s*s);
+        const double next = std::atan2(point.z+e2*n*s,p);
+        if (std::abs(next-latitude) < 1e-14) { latitude = next; break; }
+        latitude = next;
+    }
+    const double s = std::sin(latitude), n = a/std::sqrt(1-e2*s*s);
+    const double altitude = p*std::cos(latitude)+point.z*s-n*(1-e2*s*s);
+    return {latitude,std::atan2(point.y,point.x),altitude};
+}
+
+/** Поворачивает вектор ECEF в локальные оси ENU.
+ * @param vector Компоненты в осях ECEF.
+ * @param origin Геодезическое начало локальной системы WGS84.
+ * @return Восточная, северная и вертикальная компоненты.
+ */
 Vec3 ecefToEnu(const Vec3& vector, const Geodetic& origin) {
     const double sl = std::sin(origin.longitude), cl = std::cos(origin.longitude);
     const double sp = std::sin(origin.latitude), cp = std::cos(origin.latitude);
@@ -52,37 +105,90 @@ Vec3 ecefToEnu(const Vec3& vector, const Geodetic& origin) {
              cp*cl*vector.x+cp*sl*vector.y+sp*vector.z};
 }
 
+/** Поворачивает вектор из осей ВС в ENU.
+ * @param vector Компоненты вправо, вверх и вперёд в осях ВС.
+ * @param attitude Курс, тангаж и крен собственного ВС в радианах.
+ * @return Тот же вектор в локальных географических осях.
+ */
 Vec3 bodyToEnu(const Vec3& vector, const Attitude& attitude) {
     const Axes axes = bodyAxes(attitude);
     return axes.right*vector.x + axes.up*vector.y + axes.forward*vector.z;
 }
 
+/** Поворачивает вектор ENU в оси ВС.
+ * @param vector Компоненты на восток, север и вверх.
+ * @param attitude Курс, тангаж и крен собственного ВС в радианах.
+ * @return Компоненты вправо, вверх и вперёд.
+ */
 Vec3 enuToBody(const Vec3& vector, const Attitude& attitude) {
     const Axes axes = bodyAxes(attitude);
     return {dot(vector, axes.right), dot(vector, axes.up), dot(vector, axes.forward)};
 }
 
+/** Учитывает постоянный поворот камеры относительно ВС.
+ * @param vector Компоненты в осях камеры.
+ * @param mounting Постоянные углы установки камеры в радианах.
+ * @return Направление в осях ВС без переноса.
+ */
 Vec3 cameraToBody(const Vec3& vector, const Attitude& mounting) {
     const Vec3 enu = bodyToEnu(vector, mounting);
     return {enu.x, enu.z, enu.y};
 }
 
+/** Переводит вектор из осей ВС в оси установленной камеры.
+ * @param vector Вектор вправо, вверх, вперёд в осях ВС.
+ * @param mounting Постоянные углы установки камеры.
+ * @return Тот же вектор в осях камеры; смещение не применяется.
+ */
+Vec3 bodyToCamera(const Vec3& vector, const Attitude& mounting) {
+    return enuToBody({vector.x,vector.z,vector.y},mounting);
+}
+
+/** Фиксирует начало и оси общей локальной системы ENU.
+ * @param origin Геодезическое начало локальной системы WGS84.
+ */
 LocalFrame::LocalFrame(const Geodetic& origin) : ecef_origin_(toEcef(origin)),
     east_(enuToEcef({1,0,0},origin)), north_(enuToEcef({0,1,0},origin)),
     up_(enuToEcef({0,0,1},origin)) {}
 
+/** Переводит геодезическую точку в общую систему ENU.
+ * @param point Широта и долгота WGS84 в радианах, высота в метрах.
+ * @return Координаты относительно выбранного начала, метры.
+ */
 Vec3 LocalFrame::fromGeodetic(const Geodetic& point) const {
     return fromEcef(toEcef(point));
 }
 
+/** Переносит и поворачивает точку ECEF в ENU.
+ * @param point Координаты точки ECEF в метрах.
+ * @return Координаты точки в общей локальной системе.
+ */
 Vec3 LocalFrame::fromEcef(const Vec3& point) const {
     return vectorFromEcef(point - ecef_origin_);
 }
 
+/** Поворачивает вектор ECEF в общие оси ENU.
+ * @param vector Компоненты в осях ECEF.
+ * @return Проекции на восток, север и вверх в системе первого кадра.
+ */
 Vec3 LocalFrame::vectorFromEcef(const Vec3& vector) const {
     return {dot(vector,east_), dot(vector,north_), dot(vector,up_)};
 }
 
+/** Восстанавливает WGS84 из координат локальной системы.
+ * @param point Координаты ENU в метрах.
+ * @return Геодезическое положение той же точки.
+ */
+Geodetic LocalFrame::toGeodetic(const Vec3& point) const {
+    return ::fromEcef(ecef_origin_+east_*point.x+north_*point.y+up_*point.z);
+}
+
+/** Готовит постоянные для кадра матрицы и перенос камеры.
+ * @param own Геодезическое положение собственного ВС.
+ * @param attitude Курс, тангаж и крен собственного ВС в радианах.
+ * @param camera Параметры установки камеры и привязки координат объекта.
+ * @param frame Общая локальная система ENU.
+ */
 CameraTransform::CameraTransform(const Geodetic& own, const Attitude& attitude,
                                   const Camera& camera, const LocalFrame& frame) {
     auto rotate = [&](const Vec3& body) {
@@ -97,16 +203,47 @@ CameraTransform::CameraTransform(const Geodetic& own, const Attitude& attitude,
     }
 }
 
+/** Переводит положение объекта из камеры в ENU.
+ * @param position Координаты объекта относительно камеры, метры.
+ * @param object_height Вертикальный размер объекта в метрах.
+ * @return Положение основания при привязке к центру, иначе исходной точки объекта.
+ */
 Vec3 CameraTransform::apply(const Vec3& position, double object_height) const {
     return origin_ + x_*position.x + y_*position.y + z_*position.z - height_correction_*object_height;
 }
 
+/** Поворачивает направление объекта из камеры в ENU.
+ * @param vector Направление в осях камеры; длина произвольна, но не нулевая.
+ * @return Направление в ENU без переноса начала координат.
+ */
+Vec3 CameraTransform::direction(const Vec3& vector) const {
+    return x_*vector.x+y_*vector.y+z_*vector.z;
+}
+
+/** Преобразует одну точку камеры с учётом собственного движения.
+ * @param position Координаты объекта относительно камеры, метры.
+ * @param object_height Вертикальный размер объекта в метрах.
+ * @param own Геодезическое положение собственного ВС.
+ * @param attitude Курс, тангаж и крен собственного ВС в радианах.
+ * @param camera Параметры установки камеры и привязки координат объекта.
+ * @param frame Общая локальная система ENU.
+ * @return Положение объекта в общей системе ENU.
+ */
 Vec3 cameraPosition(const Vec3& position, double object_height,
                     const Geodetic& own, const Attitude& attitude,
                     const Camera& camera, const LocalFrame& frame) {
     return CameraTransform(own,attitude,camera,frame).apply(position,object_height);
 }
 
+/** Находит смещение камеры по одному опорному объекту.
+ * @param position Координаты объекта относительно камеры, метры.
+ * @param object_height Вертикальный размер объекта в метрах.
+ * @param obstacle Опорное геодезическое положение препятствия.
+ * @param own Геодезическое положение собственного ВС.
+ * @param attitude Курс, тангаж и крен собственного ВС в радианах.
+ * @param camera Параметры установки камеры и привязки координат объекта.
+ * @return Поправка в осях ВС: вправо, вверх, вперёд.
+ */
 Vec3 cameraOffset(const Vec3& position, double object_height,
                   const Geodetic& obstacle, const Geodetic& own,
                   const Attitude& attitude, const Camera& camera) {
